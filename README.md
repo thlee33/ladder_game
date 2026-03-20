@@ -2,7 +2,7 @@
 
 2~10명까지 이용할 수 있는 사다리 게임입니다.
 
-![사다리 게임 프리뷰]([file:///C:/Users/thlee/.gemini/antigravity/brain/3e79d0b3-1532-42e0-8e4a-8582394c6bb1/ladder_game_final_layout_1773990356179.png](https://github.com/thlee33/ladder_game/blob/main/demo.png))
+![사다리 게임 프리뷰](https://github.com/thlee33/ladder_game/blob/main/demo.png)
 
 ## ✨ 주요 기능 (Key Features)
 
