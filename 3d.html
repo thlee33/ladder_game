@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Network Ladder Game</title>
+    <style>
+        body { margin: 0; background: #0a0e1a; overflow: hidden; font-family: 'Outfit', sans-serif; color: white; }
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; pointer-events: none; }
+        #ui * { pointer-events: auto; }
+        .btn { padding: 8px 16px; background: rgba(0, 210, 255, 0.2); border: 1px solid rgba(0, 210, 255, 0.5); color: white; cursor: pointer; border-radius: 5px; font-size: 14px; transition: 0.3s; }
+        .btn:hover { background: rgba(0, 210, 255, 0.4); }
+        h1 { margin: 0 0 5px 0; font-size: 24px; background: linear-gradient(to right, #00d2ff, #f032e6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+        p { margin: 0 0 15px 0; font-size: 14px; opacity: 0.6; }
+        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        
+        #pole-count { width: 50px; padding: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 4px; }
+        #individual-controls { display: flex; gap: 5px; }
+        #result-mapping { margin-top: 15px; font-size: 15px; line-height: 1.6; text-shadow: 1px 1px 3px rgba(0,0,0,0.8); background: rgba(0,0,0,0.4); padding: 10px; border-radius: 8px; display: none; border-left: 3px solid #00d2ff;}
+        
+        #back-btn { position: absolute; top: 20px; right: 20px; z-index: 100; text-decoration: none; color: rgba(255,255,255,0.5); font-size: 14px; pointer-events: auto;}
+        #back-btn:hover { color: white; }
+        #instructions { position: absolute; bottom: 20px; width: 100%; text-align: center; pointer-events: none; color: rgba(255,255,255,0.5); font-size: 13px; letter-spacing: 1px;}
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="ui">
+        <h1>3D Ladder Game</h1>
+        <p>인원 수(최대 4인)를 조절하고 개별 또는 전체 결과를 확인하세요.</p>
+        
+        <div class="controls">
+            <label for="pole-count">인원 수:</label>
+            <input type="number" id="pole-count" min="2" max="4" value="4">
+            <button id="reset-btn" class="btn">새 게임 (적용)</button>
+            <button id="reveal-btn" class="btn" style="border-color: #f032e6;">전체 결과 확인</button>
+        </div>
+        
+        <div id="individual-controls"></div>
+        <div id="result-mapping"></div>
+    </div>
+    
+    <div id="instructions">화면을 드래그하여 시점을 회전하거나 휠을 굴려 확대/축소해 보세요.</div>
+    <a href="./index.html" id="back-btn">← 2D 버전으로 돌아가기</a>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // 캔버스를 이용해 문자열을 텍스처로 만드는 함수 (3D 공간 라벨용)
+        function makeTextSprite(message, color) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 128;
+            canvas.height = 128;
+            
+            // Draw background circle for visibility
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.arc(64, 64, 50, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.font = 'Bold 60px "Outfit", sans-serif';
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(message, 64, 64);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(3, 3, 1);
+            return sprite;
+        }
+
+        class Ladder3D {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                
+                // 최적화된 시인성을 위한 속성들
+                this.poles = 4;
+                this.levels = 8;     // 가로선 층수 줄임
+                this.height = 12;    // 세로선 길이 줄임
+                this.radius = 4;     // 원통 반지름 조정
+                
+                this.ladderData = []; 
+                this.objects = [];
+                this.pathMeshes = [];
+                this.mappings = {};  // 결과 매핑 저장
+                
+                // 식별하기 쉬운 형광/네온 컬러
+                this.colors = [0x00d2ff, 0xf032e6, 0x32ff7e, 0xff9f1a];
+                this.colorHex = ['#00d2ff', '#f032e6', '#32ff7e', '#ff9f1a'];
+                
+                this.topLabels = ['갑', '을', '병', '정'];
+                this.botLabels = ['A', 'B', 'C', 'D'];
+
+                this.init();
+                this.animate();
+            }
+
+            init() {
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                document.body.appendChild(this.renderer.domElement);
+
+                // 카메라 기본 위치
+                this.camera.position.set(0, 0, 18);
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+
+                const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+                this.scene.add(ambient);
+
+                const point = new THREE.PointLight(0xffffff, 1.2);
+                point.position.set(5, 10, 15);
+                this.scene.add(point);
+
+                // 이벤트 리스너 단 1회 등록
+                document.getElementById('reveal-btn').addEventListener('click', () => {
+                    this.revealPaths();
+                    this.showResultMapping(-1);
+                });
+                
+                document.getElementById('reset-btn').addEventListener('click', () => {
+                    this.generateLadder();
+                });
+
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+
+                // 초기 사다리 생성
+                this.generateLadder();
+            }
+
+            generateLadder() {
+                // UI 값 파싱
+                let newPoles = parseInt(document.getElementById('pole-count').value);
+                if (isNaN(newPoles) || newPoles < 2) newPoles = 2;
+                if (newPoles > 4) newPoles = 4;
+                document.getElementById('pole-count').value = newPoles;
+                this.poles = newPoles;
+
+                // 기존 오브젝트 삭제
+                this.objects.forEach(obj => {
+                    this.scene.remove(obj);
+                    if(obj.geometry) obj.geometry.dispose();
+                    if(obj.material) {
+                        if (obj.material.map) obj.material.map.dispose();
+                        obj.material.dispose();
+                    }
+                });
+                this.clearPaths();
+                
+                this.objects = [];
+                this.ladderData = [];
+                this.mappings = {};
+
+                const poleGeo = new THREE.CylinderGeometry(0.06, 0.06, this.height, 8);
+                const poleMat = new THREE.MeshStandardMaterial({ color: 0x333344, metalness: 0.5, roughness: 0.2 });
+
+                // 기둥 생성
+                for (let i = 0; i < this.poles; i++) {
+                    const angle = (i / this.poles) * Math.PI * 2;
+                    const x = Math.cos(angle) * this.radius;
+                    const z = Math.sin(angle) * this.radius;
+                    
+                    const pole = new THREE.Mesh(poleGeo, poleMat);
+                    pole.position.set(x, 0, z);
+                    this.scene.add(pole);
+                    this.objects.push(pole);
+
+                    // 상단 라벨 (갑, 을, 병, 정)
+                    const topSprite = makeTextSprite(this.topLabels[i], this.colorHex[i]);
+                    topSprite.position.set(x, this.height/2 + 1.2, z);
+                    this.scene.add(topSprite);
+                    this.objects.push(topSprite);
+
+                    // 상단 출발 마커
+                    const topBox = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.6, 0.2, 0.6),
+                        new THREE.MeshStandardMaterial({ 
+                            color: this.colors[i], emissive: this.colors[i], emissiveIntensity: 0.8
+                        })
+                    );
+                    topBox.position.set(x, this.height/2, z);
+                    this.scene.add(topBox);
+                    this.objects.push(topBox);
+                    
+                    // 하단 라벨 (A, B, C, D)
+                    const botSprite = makeTextSprite(this.botLabels[i], '#ffffff');
+                    botSprite.position.set(x, -this.height/2 - 1.2, z);
+                    this.scene.add(botSprite);
+                    this.objects.push(botSprite);
+
+                    // 하단 도착 마커
+                    const botBox = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.6, 0.2, 0.6),
+                        new THREE.MeshStandardMaterial({ color: 0x222222 })
+                    );
+                    botBox.position.set(x, -this.height/2, z);
+                    this.scene.add(botBox);
+                    this.objects.push(botBox);
+                }
+
+                // 가로선(브릿지) 무작위 생성 (논리적 결함 수정)
+                for (let l = 0; l < this.levels; l++) {
+                    const y = (this.height / 2) - ((l + 1) / (this.levels + 1)) * this.height;
+                    const levelBridges = [];
+                    const usedPoles = new Set();
+                    
+                    for (let p = 0; p < this.poles; p++) {
+                        // 같은 높이에서 한 기둥이 두 개의 브릿지를 소유하지 않도록 보장
+                        if (!usedPoles.has(p) && Math.random() > 0.4) {
+                            const nextP = (p + 1) % this.poles;
+                            if (!usedPoles.has(nextP)) {
+                                this.createBridge(p, nextP, y);
+                                levelBridges.push(p); 
+                                usedPoles.add(p);
+                                usedPoles.add(nextP);
+                            }
+                        }
+                    }
+                    this.ladderData.push(levelBridges);
+                }
+
+                // 각 플레이어별 최종 목적지 미리 계산
+                for(let i=0; i < this.poles; i++){
+                    this.mappings[i] = this.getDestinationIndex(i);
+                }
+
+                // UI 초기화
+                this.setupIndividualButtons();
+                const mappingDiv = document.getElementById('result-mapping');
+                mappingDiv.style.display = 'none';
+                mappingDiv.innerHTML = '';
+            }
+
+            createBridge(p1, p2, y) {
+                const angle1 = (p1 / this.poles) * Math.PI * 2;
+                const angle2 = (p2 / this.poles) * Math.PI * 2;
+                const v1 = new THREE.Vector3(Math.cos(angle1) * this.radius, y, Math.sin(angle1) * this.radius);
+                const v2 = new THREE.Vector3(Math.cos(angle2) * this.radius, y, Math.sin(angle2) * this.radius);
+                
+                const length = v1.distanceTo(v2);
+                const geo = new THREE.CylinderGeometry(0.04, 0.04, length, 8);
+                const mat = new THREE.MeshStandardMaterial({ color: 0x666677 });
+                const bridge = new THREE.Mesh(geo, mat);
+                
+                // 브릿지를 두 기둥 사이에 배치하고 회전
+                const mid = v1.clone().add(v2).multiplyScalar(0.5);
+                bridge.position.copy(mid);
+                bridge.lookAt(v2);
+                bridge.rotateX(Math.PI / 2);
+                
+                this.scene.add(bridge);
+                this.objects.push(bridge);
+            }
+
+            getDestinationIndex(startIndex) {
+                let currentP = startIndex;
+                for (let l = 0; l < this.levels; l++) {
+                    const levelBridges = this.ladderData[l];
+                    if (levelBridges.includes(currentP)) {
+                        currentP = (currentP + 1) % this.poles;
+                    } else if (levelBridges.includes((currentP - 1 + this.poles) % this.poles)) {
+                        currentP = (currentP - 1 + this.poles) % this.poles;
+                    }
+                }
+                return currentP;
+            }
+
+            calculatePath(startIndex) {
+                let currentP = startIndex;
+                const pts = [];
+                const topY = this.height / 2;
+                
+                // 출발점
+                pts.push(new THREE.Vector3(
+                    Math.cos((currentP / this.poles) * Math.PI * 2) * this.radius, topY, Math.sin((currentP / this.poles) * Math.PI * 2) * this.radius
+                ));
+
+                for (let l = 0; l < this.levels; l++) {
+                    const y = topY - ((l + 1) / (this.levels + 1)) * this.height;
+                    const levelBridges = this.ladderData[l];
+                    
+                    // 가로선 높이까지 하강
+                    pts.push(new THREE.Vector3(
+                        Math.cos((currentP / this.poles) * Math.PI * 2) * this.radius, y, Math.sin((currentP / this.poles) * Math.PI * 2) * this.radius
+                    ));
+
+                    // 연결된 가로선이 있으면 옆 기둥으로 이동
+                    if (levelBridges.includes(currentP)) {
+                        currentP = (currentP + 1) % this.poles; 
+                    } else if (levelBridges.includes((currentP - 1 + this.poles) % this.poles)) {
+                        currentP = (currentP - 1 + this.poles) % this.poles;
+                    }
+
+                    // 이동 후 위치 기록
+                    pts.push(new THREE.Vector3(
+                        Math.cos((currentP / this.poles) * Math.PI * 2) * this.radius, y, Math.sin((currentP / this.poles) * Math.PI * 2) * this.radius
+                    ));
+                }
+                
+                // 도착점 (바닥)
+                pts.push(new THREE.Vector3(
+                    Math.cos((currentP / this.poles) * Math.PI * 2) * this.radius, -topY, Math.sin((currentP / this.poles) * Math.PI * 2) * this.radius
+                ));
+                
+                return pts;
+            }
+
+            clearPaths() {
+                this.pathMeshes.forEach(p => {
+                    this.scene.remove(p.mesh);
+                    if (p.mesh.geometry) p.mesh.geometry.dispose();
+                    if (p.mesh.material) p.mesh.material.dispose();
+                });
+                this.pathMeshes = [];
+            }
+
+            drawPath(index) {
+                const path = this.calculatePath(index);
+                // 좀 더 부드러운 코너를 위해 곡선 생성
+                const curve = new THREE.CatmullRomCurve3(path, false, 'catmullrom', 0);
+                const geo = new THREE.TubeGeometry(curve, 100, 0.15, 8, false);
+                const mat = new THREE.MeshStandardMaterial({ 
+                    color: this.colors[index], 
+                    emissive: this.colors[index], 
+                    emissiveIntensity: 1.5,
+                    transparent: true, 
+                    opacity: 0.9 
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                
+                // Scale animation starting point
+                mesh.scale.set(0.01, 0.01, 0.01);
+                this.scene.add(mesh);
+                this.pathMeshes.push({ mesh, targetScale: 1, currentScale: 0.01 });
+            }
+
+            revealPath(index) {
+                this.clearPaths();
+                this.drawPath(index);
+            }
+
+            revealPaths() {
+                this.clearPaths();
+                for (let i = 0; i < this.poles; i++) {
+                    this.drawPath(i);
+                }
+            }
+
+            setupIndividualButtons() {
+                const container = document.getElementById('individual-controls');
+                container.innerHTML = '';
+                for(let i = 0; i < this.poles; i++) {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn';
+                    btn.innerText = `${this.topLabels[i]} 경로`;
+                    // 동종 계열 색상으로 테두리 지정
+                    btn.style.borderLeft = `4px solid ${this.colorHex[i]}`;
+                    btn.onclick = () => {
+                        this.revealPath(i);
+                        this.showResultMapping(i);
+                    };
+                    container.appendChild(btn);
+                }
+            }
+
+            showResultMapping(index = -1) {
+                const mappingDiv = document.getElementById('result-mapping');
+                mappingDiv.style.display = 'block';
+                
+                if (index === -1) {
+                    let html = '<strong style="color:#aaa;">[전체 결과]</strong><br>';
+                    for(let i = 0; i < this.poles; i++) {
+                        const dest = this.mappings[i];
+                        const col = this.colorHex[i];
+                        html += `<span style="color:${col}; font-weight:bold;">${this.topLabels[i]}</span> ➔ ${this.botLabels[dest]}<br>`;
+                    }
+                    mappingDiv.innerHTML = html;
+                } else {
+                    const dest = this.mappings[index];
+                    const col = this.colorHex[index];
+                    mappingDiv.innerHTML = `<strong style="color:#aaa;">[개별 결과]</strong><br><span style="color:${col}; font-weight:bold; font-size:18px;">${this.topLabels[index]}</span> ➔ <span style="font-weight:bold; font-size:18px;">${this.botLabels[dest]}</span>`;
+                }
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                // 애니메이션 효과 (선이 자라는 느낌)
+                this.pathMeshes.forEach(p => {
+                    if (p.currentScale < p.targetScale) {
+                        p.currentScale += (p.targetScale - p.currentScale) * 0.15;
+                        p.mesh.scale.set(1, p.currentScale, 1);
+                    }
+                });
+
+                if (this.controls) this.controls.update();                
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        window.onload = () => { new Ladder3D(); };
+    </script>
+</body>
+</html>
