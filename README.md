@@ -26,3 +26,6 @@ https://thlee33.github.io/ladder_game/
 - `style.css` (또는 `app.css` / `game.css`): 애니메이션 및 스타일 테마
 - `script.js`: 사다리 생성 알고리즘 및 경로 탐색 로직
 - `README.md`: 프로젝트 가이드
+
+## threeJS를 이용한 3D 버전도 있습니다. 
+![3D 사다리 게임 프리뷰](https://github.com/thlee33/ladder_game/blob/main/3d.png)
