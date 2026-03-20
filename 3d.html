@@ -209,25 +209,50 @@
                     this.objects.push(botBox);
                 }
 
-                // 가로선(브릿지) 무작위 생성 (논리적 결함 수정)
-                for (let l = 0; l < this.levels; l++) {
-                    const y = (this.height / 2) - ((l + 1) / (this.levels + 1)) * this.height;
-                    const levelBridges = [];
-                    const usedPoles = new Set();
-                    
-                    for (let p = 0; p < this.poles; p++) {
-                        // 같은 높이에서 한 기둥이 두 개의 브릿지를 소유하지 않도록 보장
-                        if (!usedPoles.has(p) && Math.random() > 0.4) {
-                            const nextP = (p + 1) % this.poles;
-                            if (!usedPoles.has(nextP)) {
-                                this.createBridge(p, nextP, y);
-                                levelBridges.push(p); 
-                                usedPoles.add(p);
-                                usedPoles.add(nextP);
+                // 가로선(브릿지) 무작위 생성 (최소 1개 연결 보장 로직 추가)
+                let validLadder = false;
+                let attempts = 0;
+                
+                while (!validLadder && attempts < 100) {
+                    this.ladderData = [];
+                    for (let l = 0; l < this.levels; l++) {
+                        const levelBridges = [];
+                        const usedPoles = new Set();
+                        
+                        for (let p = 0; p < this.poles; p++) {
+                            // 브릿지 생성 확률
+                            if (!usedPoles.has(p) && Math.random() > 0.4) {
+                                const nextP = (p + 1) % this.poles;
+                                if (!usedPoles.has(nextP)) {
+                                    levelBridges.push(p); 
+                                    usedPoles.add(p);
+                                    usedPoles.add(nextP);
+                                }
                             }
                         }
+                        this.ladderData.push(levelBridges);
                     }
-                    this.ladderData.push(levelBridges);
+                    
+                    // 모든 기둥이 1개 이상 연결되었는지 검증
+                    let connectionCounts = new Array(this.poles).fill(0);
+                    for (let l = 0; l < this.levels; l++) {
+                        for (let p of this.ladderData[l]) {
+                            connectionCounts[p]++;
+                            connectionCounts[(p + 1) % this.poles]++;
+                        }
+                    }
+                    
+                    // 모든 카운트가 1 이상이면 유효한 사다리
+                    validLadder = connectionCounts.every(count => count >= 1);
+                    attempts++;
+                }
+
+                // 검증된 데이터로 실제 3D 모델(브릿지) 시각화
+                for (let l = 0; l < this.levels; l++) {
+                    const y = (this.height / 2) - ((l + 1) / (this.levels + 1)) * this.height;
+                    for (let p of this.ladderData[l]) {
+                        this.createBridge(p, (p + 1) % this.poles, y);
+                    }
                 }
 
                 // 각 플레이어별 최종 목적지 미리 계산
